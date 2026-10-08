@@ -9,6 +9,12 @@ from .config import DATA
 
 PORT = 8766
 PROFILE = DATA / "chrome_profile"
+KEEP_AWAKE = [
+    "--disable-features=CalculateNativeWinOcclusion",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    "--disable-background-timer-throttling",
+]
 PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Hands Free Computer - listening</title>
 <style>
@@ -50,6 +56,7 @@ function begin(){
 }
 if (!R) { status.textContent = 'This browser has no speech recognition.'; report('unsupported'); }
 else {
+  document.addEventListener('visibilitychange', () => { report('page ' + document.visibilityState); if (document.visibilityState === 'visible') begin(); });
   begin();
   setInterval(() => {
     post('/ping').catch(() => {});
@@ -85,6 +92,7 @@ class WebSpeech:
         self.lang = lang
         self.port = port
         self.last_ping = 0.0
+        self.flags = list(KEEP_AWAKE)
         self._server = None
         self._proc = None
 
@@ -135,7 +143,7 @@ class WebSpeech:
         PROFILE.mkdir(parents=True, exist_ok=True)
         w, h = 430, 190
         self._proc = subprocess.Popen([
-            chrome, f"--user-data-dir={PROFILE}", "--no-first-run", "--no-default-browser-check",
+            chrome, f"--user-data-dir={PROFILE}", "--no-first-run", "--no-default-browser-check", *self.flags,
             f"--app=http://127.0.0.1:{self.port}/", f"--window-size={w},{h}",
             f"--window-position={screen[0] - w - 20},{20}"])
 
