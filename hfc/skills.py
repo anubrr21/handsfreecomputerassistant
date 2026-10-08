@@ -1,3 +1,4 @@
+import ast
 import ctypes
 import datetime
 import difflib
@@ -9,6 +10,7 @@ import threading
 import urllib.parse
 import urllib.request
 import webbrowser
+import winsound
 from pathlib import Path
 
 from pynput import keyboard as kb
@@ -63,6 +65,30 @@ SHORTCUTS = {
 }
 
 
+WEATHER_CODES = {
+    0: "clear sky", 1: "mostly clear sky", 2: "some cloud", 3: "overcast sky", 45: "fog", 48: "fog",
+    51: "light drizzle", 53: "drizzle", 55: "heavy drizzle", 61: "light rain", 63: "rain", 65: "heavy rain",
+    71: "light snow", 73: "snow", 75: "heavy snow", 80: "light showers", 81: "showers", 82: "heavy showers",
+    95: "a thunderstorm", 96: "a thunderstorm with hail", 99: "a thunderstorm with hail",
+}
+OPERATORS = {ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b, ast.Mult: lambda a, b: a * b,
+             ast.Div: lambda a, b: a / b, ast.Mod: lambda a, b: a % b, ast.Pow: lambda a, b: a ** b}
+
+
+def _evaluate(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.BinOp) and type(node.op) in OPERATORS:
+        left, right = _evaluate(node.left), _evaluate(node.right)
+        if isinstance(node.op, ast.Pow) and abs(right) > 12:
+            raise ValueError("exponent too large")
+        return OPERATORS[type(node.op)](left, right)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        value = _evaluate(node.operand)
+        return -value if isinstance(node.op, ast.USub) else value
+    raise ValueError("unsupported expression")
+
+
 def _norm(text):
     return re.sub(r"[^a-z0-9 ]+", " ", text.lower()).strip()
 
@@ -83,6 +109,7 @@ class Laptop:
     def __init__(self, dry_run=False, spotify_api=None):
         self.dry_run = dry_run
         self.spotify_api = spotify_api
+        self.notify = lambda message: None
         self.log = []
         self._kb = kb.Controller()
         self._mouse = ms.Controller()
@@ -295,6 +322,139 @@ class Laptop:
         if s.percent < 0 or s.percent > 100:
             return "I can't read the battery level."
         return f"Battery is at {s.percent} percent" + (", plugged in." if s.ac == 1 else ", on battery.")
+
+    def _powershell(self, script, timeout=15):
+        done = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True,
+                              timeout=timeout, creationflags=subprocess.CREATE_NO_WINDOW)
+        return done.stdout.strip()
+
+    def _get(self, url, timeout=8):
+        req = urllib.request.Request(url, headers={"User-Agent": "hands-free-computer/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+
+    def close_app(self, name):
+        wanted = APP_ALIASES.get(_norm(name), name)
+        match = _best(wanted, list(self.apps), cutoff=0.7) or wanted
+        words = [w for w in {_norm(name), _norm(match), _norm(match).split()[-1] if _norm(match) else ""} if len(w) > 2]
+        if not words:
+            return None
+        if self.dry_run:
+            self.log.append(("close", match))
+            return f"Closed {match}."
+        tests = " -or ".join(f"$_.MainWindowTitle -like '*{w}*' -or $_.ProcessName -like '*{w.replace(' ', '')}*'" for w in words)
+        count = self._powershell(
+            f"$p = @(Get-Process | Where-Object {{ $_.MainWindowHandle -ne 0 -and ({tests}) }}); "
+            "$p | ForEach-Object { $_.CloseMainWindow() | Out-Null }; $p.Count")
+        self.log.append(("close", match))
+        return f"Closed {match}." if count.isdigit() and int(count) else None
+
+    def focus_app(self, name):
+        wanted = APP_ALIASES.get(_norm(name), name)
+        match = _best(wanted, list(self.apps), cutoff=0.7) or wanted
+        if self.dry_run:
+            self.log.append(("focus", match))
+            return f"Switched to {match}."
+        word = _norm(match).split()[-1] if _norm(match) else _norm(name)
+        ok = self._powershell(
+            f"$p = Get-Process | Where-Object {{ $_.MainWindowHandle -ne 0 -and ($_.MainWindowTitle -like '*{word}*' -or "
+            f"$_.ProcessName -like '*{word}*') }} | Select-Object -First 1; "
+            "if ($p) { (New-Object -ComObject WScript.Shell).AppActivate($p.Id) | Out-Null; 'yes' }")
+        self.log.append(("focus", match))
+        return f"Switched to {match}." if ok == "yes" else None
+
+    def brightness(self, change=None, level=None):
+        if self.dry_run:
+            self.log.append(("brightness", f"={level}" if level is not None else f"{change:+d}"))
+            return f"Brightness set to {level} percent." if level is not None else "Brightness changed."
+        current = self._powershell("(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness).CurrentBrightness")
+        if not current.isdigit():
+            return "I can't control the brightness on this screen."
+        target = max(0, min(100, int(level) if level is not None else int(current) + change))
+        self._powershell("Invoke-CimMethod -InputObject (Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods) "
+                         f"-MethodName WmiSetBrightness -Arguments @{{Timeout=1;Brightness={target}}} | Out-Null")
+        self.log.append(("brightness", f"={target}"))
+        return f"Brightness set to {target} percent."
+
+    def weather(self, place=""):
+        if self.dry_run:
+            self.log.append(("weather", place))
+            return f"Weather for {place or 'here'}."
+        try:
+            if place:
+                found = self._get("https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + urllib.parse.quote(place))
+                if not found.get("results"):
+                    return f"I couldn't find a place called {place}."
+                spot = found["results"][0]
+                lat, lon, name = spot["latitude"], spot["longitude"], spot["name"]
+            else:
+                here = self._get("http://ip-api.com/json/?fields=city,lat,lon")
+                lat, lon, name = here["lat"], here["lon"], here.get("city", "your area")
+            data = self._get(
+                f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&timezone=auto&forecast_days=1"
+                "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m"
+                "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max")
+        except Exception:
+            return "I couldn't reach the weather service."
+        now, day = data["current"], data["daily"]
+        sky = WEATHER_CODES.get(now["weather_code"], "mixed conditions")
+        return (f"In {name} it is {round(now['temperature_2m'])} degrees with {sky}, humidity {round(now['relative_humidity_2m'])} percent. "
+                f"Today's high is {round(day['temperature_2m_max'][0])}, low {round(day['temperature_2m_min'][0])}, "
+                f"and the chance of rain is {day['precipitation_probability_max'][0]} percent.")
+
+    def wikipedia(self, topic):
+        if self.dry_run:
+            self.log.append(("wiki", topic))
+            return f"About {topic}."
+        try:
+            hits = self._get("https://en.wikipedia.org/w/api.php?action=opensearch&limit=1&format=json&search="
+                             + urllib.parse.quote(topic))
+            if not hits[1]:
+                return None
+            page = self._get("https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.parse.quote(hits[1][0].replace(" ", "_")))
+        except Exception:
+            return None
+        text = re.sub(r"\s*\([^)]*\)", "", page.get("extract", "")).strip()
+        if not text or page.get("type") == "disambiguation":
+            return None
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        answer = sentences[0]
+        if len(sentences) > 1 and len(answer) + len(sentences[1]) < 320:
+            answer += " " + sentences[1]
+        return answer
+
+    def calculate(self, expression):
+        text = expression.lower().replace(",", "")
+        swaps = [(r"\bsquare root of\b", "sqrt "), (r"\bto the power of\b|\braised to\b", "**"), (r"\bsquared\b", "**2"),
+                 (r"\bcubed\b", "**3"), (r"\bpercent of\b", "/100*"), (r"\bmultiplied by\b|\btimes\b|\bx\b|\binto\b", "*"),
+                 (r"\bdivided by\b|\bover\b|\bby\b", "/"), (r"\bplus\b|\band\b", "+"), (r"\bminus\b", "-"), (r"\bmod\b", "%")]
+        for pattern, symbol in swaps:
+            text = re.sub(pattern, symbol, text)
+        text = re.sub(r"sqrt\s*([\d.]+)", r"(\1**0.5)", text)
+        text = re.sub(r"[^0-9.+\-*/%() ]", "", text).strip()
+        if not re.search(r"\d", text) or not re.search(r"[+\-*/%]", text):
+            return None
+        try:
+            value = _evaluate(ast.parse(text, mode="eval").body)
+        except Exception:
+            return None
+        shown = str(int(value)) if abs(value - round(value)) < 1e-9 else f"{value:.4f}".rstrip("0").rstrip(".")
+        self.log.append(("calc", text))
+        return f"That is {shown}."
+
+    def timer(self, seconds, label=""):
+        message = f"Time is up. {label}".strip() if label else "Your timer is done."
+        self.log.append(("timer", f"{seconds}s {label}".strip()))
+        if not self.dry_run:
+            def ring():
+                for _ in range(3):
+                    winsound.Beep(1000, 250)
+                self.notify(message)
+
+            threading.Timer(seconds, ring).start()
+        spoken = f"{seconds // 3600} hours" if seconds >= 3600 and seconds % 3600 == 0 else \
+            f"{seconds // 60} minutes" if seconds >= 60 and seconds % 60 == 0 else f"{seconds} seconds"
+        return f"Timer set for {spoken}." if not label else f"I'll remind you in {spoken}."
 
     def run_powershell(self, command):
         if not self.confirm(f"The assistant wants to run this command:\n\n{command}\n\nAllow it?"):

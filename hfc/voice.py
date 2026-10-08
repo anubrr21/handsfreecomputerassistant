@@ -201,6 +201,8 @@ class Voice:
         self._interim_at = 0.0
         self._tainted = False
         self.accepts = accepts
+        self.joiner = None
+        self._fragment = ("", 0.0)
         self.speaker = speaker
         self.wake = wake
         self.model_name = model_name if model_name and downloaded(model_name) else "base.en"
@@ -369,6 +371,14 @@ class Voice:
 
     def _dispatch(self, text, source, was_armed, detail=""):
         self.state = "thinking"
+        previous, said_at = self._fragment
+        self._fragment = (text, time.perf_counter())
+        if self.joiner is not None and previous and time.perf_counter() - said_at < 6 and split_wake_word(text) is None:
+            joined = self.joiner(previous, text)
+            if joined:
+                self.log(f"[{source}] joined {previous!r} + {text!r}")
+                text = joined
+                self._fragment = ("", 0.0)
         after_wake = split_wake_word(text)
         if after_wake is not None:
             command = after_wake

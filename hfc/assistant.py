@@ -3,7 +3,54 @@ import time
 
 from .skills import APP_ALIASES, KNOWN_FOLDERS, SHORTCUTS, SITES
 
-SAFE_UNADDRESSED = {"open", "youtube", "spotify", "web_search", "time", "battery", "volume", "media", "app"}
+SAFE_UNADDRESSED = {"open", "youtube", "spotify", "web_search", "time", "battery", "volume", "media", "app",
+                    "brightness", "weather", "wiki", "calc", "timer", "focus", "scroll"}
+BRAIN_FIRST = {"wiki", "calc"}
+SYNONYMS = [
+    (r"^(?:fire up|pull up|boot up|start up|load up|get me|show me|launch|run) ", "open "),
+    (r"^(?:quit|exit|kill|shut|terminate|end) (?!down)", "close "),
+    (r"^(?:switch to|jump to|focus on|go back to) ", "switch to "),
+    (r"\b(?:google )?chrome browser\b", "chrome"),
+    (r"\bmicrosoft edge browser\b|\bedge browser\b", "edge"),
+    (r"\b(?:sound|audio)\b(?= (?:up|down|to|at|level|low|high|full|half))", "volume"),
+    (r"\bscreen brightness\b|\bdisplay brightness\b", "brightness"),
+    (r"\bper ?cent\b", "percent"),
+]
+UNITS = {"second": 1, "sec": 1, "minute": 60, "min": 60, "hour": 3600, "hr": 3600}
+SMALL = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+         "nine": 9, "ten": 10, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40, "forty five": 45,
+         "fifty": 50, "sixty": 60, "ninety": 90, "half": 50, "full": 100, "max": 100, "maximum": 100,
+         "low": 20, "medium": 50, "mid": 50, "high": 80, "zero": 0, "minimum": 0, "min": 0}
+
+
+def amount(word):
+    word = word.strip().lower()
+    if re.fullmatch(r"\d{1,4}", word):
+        return int(word)
+    return SMALL.get(word)
+
+
+def level_command(t, noun):
+    up = r"(?:increase|raise|turn up|bump up|boost|higher|more|up|brighten|louder)"
+    down = r"(?:decrease|lower|reduce|turn down|drop|less|down|dim|quieter|soften)"
+    value = r"(\d{1,3}|[a-z]+(?: five)?)"
+    m = re.fullmatch(rf"(?:(?:set|put|make|change|keep|bring|take|turn|{up}|{down}) )?(?:the |my )?{noun}(?: level)?"
+                     rf"(?: (?:up|down))? (?:to|at|as) {value}(?: ?percent| ?%)?", t) or \
+        re.fullmatch(rf"(?:the |my )?{noun}(?: level)? {value}(?: ?percent| ?%)?", t) or \
+        re.fullmatch(rf"(?:set|put|make|change|keep) (?:the |my )?{noun}(?: level)? {value}(?: ?percent| ?%)?", t)
+    if m and amount(m.group(1)) is not None:
+        return None, max(0, min(100, amount(m.group(1))))
+    m = re.fullmatch(rf"(?:{up}|{down}) (?:the |my )?{noun}(?: level)? by {value}(?: ?percent| ?%)?", t)
+    if m and amount(m.group(1)) is not None:
+        sign = 1 if re.match(up, t) else -1
+        return sign * max(1, amount(m.group(1)) // 2), None
+    if re.fullmatch(rf"(?:{up}) (?:the |my )?{noun}(?: level)?(?: a (?:bit|little))?|(?:the |my )?{noun} (?:up|higher|more)|"
+                    rf"turn (?:the |my )?{noun} up|make (?:the |my )?{noun} (?:higher|louder|brighter)", t):
+        return 5, None
+    if re.fullmatch(rf"(?:{down}) (?:the |my )?{noun}(?: level)?(?: a (?:bit|little))?|(?:the |my )?{noun} (?:down|lower|less)|"
+                    rf"turn (?:the |my )?{noun} down|make (?:the |my )?{noun} (?:lower|quieter|dimmer)", t):
+        return -5, None
+    return None
 
 POLITE = re.compile(r"^(?:hey |ok |okay |so |um |uh )*(?:please |can you |could you |would you |will you |"
                     r"i want you to |i want to |i need you to |just |kindly )*", re.I)
@@ -71,6 +118,8 @@ def _parse(text):
     t, original = clean(text)
     if not t:
         return None
+    for pattern, replacement in SYNONYMS:
+        t = re.sub(pattern, replacement, t)
     t = PHRASES.get(t, t)
 
     if re.fullmatch(r"(?:pause|stop|disable) (?:the )?(?:hand|hands|gesture|cursor)(?:s)? ?(?:control|tracking)?", t):
@@ -86,13 +135,43 @@ def _parse(text):
     if re.search(r"\bbattery\b", t) and not t.startswith(("search", "google")):
         return "battery", ()
 
-    m = re.fullmatch(r"(?:set |turn |change |make )?(?:the )?volume (?:to |at )?(\d{1,3}|[a-z]+)(?: ?percent| ?%)?", t)
-    if m and (m.group(1).isdigit() or m.group(1) in NUMBER_WORDS):
-        return "volume", (None, int(m.group(1)) if m.group(1).isdigit() else NUMBER_WORDS[m.group(1)])
-    if re.fullmatch(r"(?:turn (?:the )?)?volume up|(?:turn it |make it )?louder|(?:increase|raise) (?:the )?volume|turn up (?:the )?volume|turn (?:the )?volume up", t):
-        return "volume", (5, None)
-    if re.fullmatch(r"(?:turn (?:the )?)?volume down|(?:turn it |make it )?quieter|(?:decrease|lower|reduce) (?:the )?volume|turn down (?:the )?volume|turn (?:the )?volume down", t):
-        return "volume", (-5, None)
+    m = re.search(r"\b(?:set|start|put) (?:a |an )?(?:timer|alarm|countdown) (?:for|of) ([a-z0-9 ]+?) (second|sec|minute|min|hour|hr)s?\b", t) or \
+        re.search(r"\b(?:timer|alarm|countdown) (?:for|of) ([a-z0-9 ]+?) (second|sec|minute|min|hour|hr)s?\b", t)
+    if m and amount(m.group(1)) is not None:
+        return "timer", (amount(m.group(1)) * UNITS[m.group(2)], "")
+    m = re.search(r"\bremind me (?:in|after) ([a-z0-9 ]+?) (second|sec|minute|min|hour|hr)s?(?: (?:to|that|about) (.+))?$", t) or \
+        re.search(r"\bremind me (?:to|that|about) (.+) (?:in|after) ([a-z0-9 ]+?) (second|sec|minute|min|hour|hr)s?$", t)
+    if m:
+        groups = m.groups()
+        if groups[0] and amount(groups[0]) is not None:
+            return "timer", (amount(groups[0]) * UNITS[groups[1]], (groups[2] or "").strip())
+        if amount(groups[1]) is not None:
+            return "timer", (amount(groups[1]) * UNITS[groups[2]], groups[0].strip())
+
+    found = level_command(t, "volume")
+    if found:
+        return "volume", found
+    if re.fullmatch(r"(?:turn it |make it )?louder|(?:turn it |make it )?quieter", t):
+        return "volume", (5 if "louder" in t else -5, None)
+    found = level_command(t, "brightness")
+    if found:
+        return "brightness", found
+    if re.fullmatch(r"(?:make (?:it|the screen) )?(brighter|dimmer|darker)|(brighten|dim) (?:the )?screen", t):
+        return "brightness", (10 if "bright" in t else -10, None)
+
+    m = re.fullmatch(r"(?:what(?:'s| is) the |how(?:'s| is) the |tell me the |check the |show the )?"
+                     r"(?:weather|temperature|forecast)(?: like| going to be)?(?: today| now| right now| outside| tomorrow)?"
+                     r"(?: (?:in|at|for|of) (.+?))?(?: today| now| right now)?", t) or \
+        re.fullmatch(r"(?:is it|will it) (?:going to )?(?:rain|raining|hot|cold|sunny)(?: today| now| outside)?(?: (?:in|at) (.+))?", t) or \
+        re.fullmatch(r"how (?:hot|cold|warm) is it(?: today| now| outside)?(?: (?:in|at) (.+))?", t)
+    if m:
+        return "weather", ((m.group(1) or "").strip(),)
+
+    m = re.fullmatch(r"(?:what(?:'s| is)|calculate|compute|work out|how much is|solve) (.+)", t)
+    if m and re.search(r"\d", m.group(1)) and re.search(
+            r"[+\-*/%]|\b(?:plus|minus|times|multiplied|divided|over|power|squared|cubed|percent of|square root|into|mod)\b",
+            m.group(1)):
+        return "calc", (m.group(1),)
     if re.fullmatch(r"(?:un)?mute(?: (?:the )?(?:sound|volume|audio|laptop|computer))?", t):
         return "media", ("mute",)
     if re.fullmatch(r"(?:pause|stop)(?: (?:the |this )?(?:music|song|video|track|playback))?", t):
@@ -142,9 +221,9 @@ def _parse(text):
     m = re.fullmatch(r"(double|right|left)?[ -]?click(?: (?:here|it|this|that))?", t)
     if m:
         return "click", (m.group(1) or "left",)
-    m = re.fullmatch(r"scroll (up|down)(?: (?:a )?(?:bit|little|more|page))?|page (up|down)", t)
+    m = re.fullmatch(r"scroll (up|down)(?: (?:a )?(?:bit|little|more|page))?|page (up|down)|go (up|down)", t)
     if m:
-        return "scroll", (m.group(1) or m.group(2),)
+        return "scroll", (m.group(1) or m.group(2) or m.group(3),)
 
     if re.fullmatch(r"lock(?: (?:the|my|this))?(?: (?:computer|laptop|screen|pc))?", t):
         return "lock", ()
@@ -159,6 +238,19 @@ def _parse(text):
                      r"look for|find out|search up) (.+)", t)
     if m:
         return "web_search", (m.group(1),)
+
+    m = re.fullmatch(r"close (?:the |my |this )?(.+?)(?: app| application| program| window)?", t)
+    if m and m.group(1) not in ("tab", "window", "it", "this", "that"):
+        return "close_app", (m.group(1),)
+    m = re.fullmatch(r"switch to (?:the |my )?(.+?)(?: app| application| window)?", t)
+    if m:
+        return "focus", (m.group(1),)
+
+    m = re.fullmatch(r"(?:who|what|where) (?:is|are|was|were) (?:a |an |the )?(.+)", t) or \
+        re.fullmatch(r"(?:tell me about|define|explain|describe|what do you know about) (?:a |an |the )?(.+)", t) or \
+        re.fullmatch(r"what does (.+?) mean", t) or re.fullmatch(r"(?:meaning|definition) of (.+)", t)
+    if m:
+        return "wiki", (m.group(1).strip(),)
 
     m = re.fullmatch(r"(?:open|launch|start|run|go to|show(?: me)?|bring up|take me to) (?:up )?(.+)", t)
     if m:
@@ -182,10 +274,22 @@ class Assistant:
         self.brain = brain
         self.app_control = app_control or (lambda action: None)
 
+    def join_fragments(self, previous, text):
+        combined = f"{previous} {text}"
+        both = parse(combined)
+        if both is None or both[0] not in SAFE_UNADDRESSED:
+            return None
+        alone = parse(text)
+        if alone is None or (both != alone and both != parse(previous)):
+            return combined
+        return None
+
     def is_clear_command(self, text):
         parsed = parse(text)
         if parsed is None or parsed[0] not in SAFE_UNADDRESSED:
             return False
+        if parsed[0] == "focus":
+            return self._known_name(parsed[1][0]) is not None
         if parsed[0] == "open":
             target, kind = parsed[1]
             return kind == "any" and self._known_name(target) is not None
@@ -215,11 +319,20 @@ class Assistant:
                 replies.append(self._run(*step) or "I couldn't do one step.")
             return " ".join(replies)
         parsed = parse(text)
+        if parsed and parsed[0] in BRAIN_FIRST and self.brain is not None:
+            return self.brain.ask(text)
         reply = self._run(*parsed) if parsed else None
         if reply is not None:
             return reply
         if self.brain is not None:
             return self.brain.ask(text)
+        if parsed and parsed[0] == "wiki":
+            self.laptop.web_search(parsed[1][0])
+            return f"I couldn't find a short answer, so I searched the web for {parsed[1][0]}."
+        if parsed and parsed[0] == "close_app":
+            return f"I couldn't find {parsed[1][0]} open."
+        if parsed and parsed[0] == "focus":
+            return self._open(parsed[1][0], "any") or f"I couldn't find {parsed[1][0]}."
         guess = self._keyword_guess(text)
         if guess is not None:
             return self._open(guess, "any")
@@ -237,11 +350,14 @@ class Assistant:
             return self._open(*args)
         if action == "volume":
             return lap.volume(change=args[0], level=args[1])
+        if action == "brightness":
+            return lap.brightness(change=args[0], level=args[1])
         simple = {
             "time": lap.time, "battery": lap.battery, "media": lap.media, "youtube": lap.youtube,
             "spotify": lap.spotify, "web_search": lap.web_search, "type_text": lap.type_text,
             "shortcut": lap.shortcut, "press": lap.press, "click": lap.click, "scroll": lap.scroll,
-            "lock": lap.lock, "power": lap.power,
+            "lock": lap.lock, "power": lap.power, "weather": lap.weather, "wiki": lap.wikipedia,
+            "calc": lap.calculate, "timer": lap.timer, "close_app": lap.close_app, "focus": lap.focus_app,
         }
         return simple[action](*args)
 

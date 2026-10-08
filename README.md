@@ -79,6 +79,12 @@ or change power state need the wake word first ("Computer, ..." or "Jarvis, ..."
 | "pause", "next song", "volume to 40 percent", "mute" | Media and volume |
 | "Computer, close the tab", "Computer, take a screenshot" | Window and keyboard shortcuts |
 | "Computer, type hello world" | Typing |
+| "lower the volume to 24", "set brightness to 40", "dim the screen" | Volume and brightness in plain words |
+| "close Spotify", "switch to Chrome" | Close or switch to a running app |
+| "what's the weather in Kolkata", "is it going to rain today" | Spoken weather report |
+| "who is Sachin Tendulkar", "what is machine learning" | Spoken answer from Wikipedia |
+| "what is 23 times 7", "calculate 15 percent of 200" | Spoken result |
+| "set a timer for 5 minutes", "remind me in 10 minutes to drink water" | Timer with a spoken alert |
 | "what time is it", "how much battery is left" | Spoken answer |
 | "Computer, lock my laptop", "Computer, shut down" | Power (shut down, restart and sleep ask for confirmation) |
 
@@ -108,8 +114,9 @@ Copy `.env.example` to `.env` and fill in what you want to use.
 
 **LLM backend**
 
-Put an Anthropic API key in `.env` as `ANTHROPIC_API_KEY`. Requests that the built-in command
-patterns do not cover are then sent to the model, which can call the same actions as tools.
+Run `.venv\Scripts\python.exe set_key.py` and paste an Anthropic API key, or put it in `.env` as
+`ANTHROPIC_API_KEY`. Requests that the built-in command patterns do not cover are then sent to
+the model, which can call the same actions as tools.
 Shell commands it proposes are shown in a confirmation box and run only if you accept.
 
 ## Speech recognition
@@ -158,6 +165,7 @@ setup_models.py      downloads the MediaPipe models
 spotify_login.py     one-time Spotify authorisation
 mic_check.py         records and plays back each microphone
 download_model.py    downloads the larger Whisper model
+set_key.py           saves an API key for the LLM backend
 hfc/
   app.py             main loop, preview, hotkeys
   perception.py      camera capture and landmark models

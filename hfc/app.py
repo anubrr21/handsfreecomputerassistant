@@ -189,6 +189,8 @@ def main():
                       model_name=args.model, accepts=None if args.strict_wake else assistant.is_clear_command,
                       engine=engine, screen=(sw, sh))
         voice.start()
+        voice.joiner = assistant.join_fragments
+        laptop.notify = speaker.say
         fusion.on_thumb = voice.arm
         print("Voice assistant: " + ("offline commands + LLM backend" if brain else
                                      "offline commands only (no API key in .env)")

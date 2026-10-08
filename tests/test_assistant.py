@@ -75,10 +75,36 @@ class ParseTests(unittest.TestCase):
     def test_typing_keeps_the_original_wording(self):
         self.assertEqual(parse("Type Hello World, how are you?"), ("type_text", ("Hello World, how are you",)))
 
-    def test_questions_and_open_requests_are_left_for_the_brain(self):
-        for said in ("who was the first prime minister of India", "summarise my last email",
-                     "why is the sky blue", "rename the report file to final", ""):
+    def test_open_ended_requests_are_left_for_the_brain(self):
+        for said in ("summarise my last email", "why is the sky blue", "rename the report file to final", ""):
             self.assertIsNone(parse(said), said)
+
+    def test_natural_phrasing(self):
+        cases = {
+            "lower the volume to 24": ("volume", (None, 24)),
+            "volume low": ("volume", (None, 20)),
+            "sound to 60 percent": ("volume", (None, 60)),
+            "reduce the volume by 10": ("volume", (-5, None)),
+            "turn the volume up": ("volume", (5, None)),
+            "set brightness to 40": ("brightness", (None, 40)),
+            "dim the screen": ("brightness", (-10, None)),
+            "close the Microsoft Edge": ("close_app", ("microsoft edge",)),
+            "quit spotify": ("close_app", ("spotify",)),
+            "close the tab": ("shortcut", ("close tab",)),
+            "switch to chrome": ("focus", ("chrome",)),
+            "fire up notepad": ("open", ("notepad", "any")),
+            "open google chrome browser": ("open", ("chrome", "any")),
+            "what's the weather in Kolkata": ("weather", ("kolkata",)),
+            "is it going to rain today": ("weather", ("",)),
+            "what is 23 times 7": ("calc", ("23 times 7",)),
+            "who is Sachin Tendulkar": ("wiki", ("sachin tendulkar",)),
+            "tell me about the Taj Mahal": ("wiki", ("taj mahal",)),
+            "set a timer for 5 minutes": ("timer", (300, "")),
+            "remind me in 10 minutes to drink water": ("timer", (600, "drink water")),
+            "shut down": ("power", ("shutdown",)),
+        }
+        for said, expected in cases.items():
+            self.assertEqual(parse(said), expected, said)
 
 
 class AssistantTests(unittest.TestCase):
@@ -142,6 +168,45 @@ class AssistantTests(unittest.TestCase):
     def test_app_control_is_forwarded(self):
         self.assistant.handle("pause hand control")
         self.assertEqual(self.controls, ["pause"])
+
+    def test_arithmetic_is_computed_safely(self):
+        lap = self.laptop
+        self.assertEqual(lap.calculate("23 times 7"), "That is 161.")
+        self.assertEqual(lap.calculate("15 percent of 200"), "That is 30.")
+        self.assertEqual(lap.calculate("12 plus 5 divided by 2"), "That is 14.5.")
+        self.assertEqual(lap.calculate("square root of 144"), "That is 12.")
+        self.assertIsNone(lap.calculate("__import__('os').system('dir')"))
+        self.assertIsNone(lap.calculate("9 to the power of 9999"))
+
+    def test_split_sentences_are_joined(self):
+        join = self.assistant.join_fragments
+        self.assertEqual(join("lower the volume", "to 24"), "lower the volume to 24")
+        self.assertEqual(join("play", "believer on spotify"), "play believer on spotify")
+        self.assertIsNone(join("open chrome", "what time is it"))
+        self.assertIsNone(join("hello there", "shut down the computer"))
+
+    def test_closing_an_app_needs_the_wake_word(self):
+        self.assertFalse(self.assistant.is_clear_command("close spotify"))
+        self.assertEqual(self.assistant.handle("close spotify"), "Closed Spotify.")
+        self.assertEqual(self.laptop.log, [("close", "Spotify")])
+
+    def test_new_harmless_commands_need_no_wake_word(self):
+        for said in ("lower the volume to 24", "what's the weather in Kolkata", "what is 23 times 7",
+                     "who is Sachin Tendulkar", "set a timer for 5 minutes", "scroll down", "set brightness to 40"):
+            self.assertTrue(self.assistant.is_clear_command(said), said)
+
+    def test_timer_and_brightness_and_weather_run(self):
+        self.assertEqual(self.assistant.handle("set a timer for 5 minutes"), "Timer set for 5 minutes.")
+        self.assertEqual(self.assistant.handle("remind me in 10 minutes to drink water"), "I'll remind you in 10 minutes.")
+        self.assistant.handle("set brightness to 40")
+        self.assistant.handle("what's the weather in Kolkata")
+        self.assertEqual(self.laptop.log, [("timer", "300s"), ("timer", "600s drink water"),
+                                           ("brightness", "=40"), ("weather", "kolkata")])
+
+    def test_factual_questions_go_to_the_brain_when_there_is_one(self):
+        self.assistant.brain = SimpleNamespace(ask=lambda text: f"brain: {text}")
+        self.assertEqual(self.assistant.handle("who is Sachin Tendulkar"), "brain: who is Sachin Tendulkar")
+        self.assertEqual(self.assistant.handle("volume up"), "Volume up.")
 
     def test_without_a_brain_unknown_requests_get_an_honest_reply(self):
         self.assertIn("didn't catch", self.assistant.handle("why is the sky blue"))
