@@ -21,9 +21,14 @@ KNOWN_FOLDERS = {
     "desktop": HOME / "Desktop", "documents": HOME / "Documents", "downloads": HOME / "Downloads",
     "pictures": HOME / "Pictures", "photos": HOME / "Pictures", "music": HOME / "Music",
     "videos": HOME / "Videos", "home": HOME, "user": HOME, "screenshots": HOME / "Pictures" / "Screenshots",
+    "download": HOME / "Downloads", "document": HOME / "Documents", "picture": HOME / "Pictures",
+    "video": HOME / "Videos",
 }
 SEARCH_ROOTS = ["Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos", "OneDrive"]
-SKIP_DIRS = {"node_modules", ".git", ".venv", "venv", "__pycache__", "AppData", "site-packages", "$RECYCLE.BIN"}
+SKIP_DIRS = {"node_modules", ".git", ".venv", "venv", "env", "__pycache__", "AppData", "site-packages",
+             "$RECYCLE.BIN", "Application Data", "Local Settings", "Cookies", "NetHood", "PrintHood", "Recent",
+             "SendTo", "Start Menu", "Templates", "My Documents", "Searches", "Links", "Contacts", "Favorites",
+             "Saved Games", "dist", "build", "target"}
 
 APP_ALIASES = {
     "chrome": "Google Chrome", "google chrome": "Google Chrome", "browser": "Google Chrome",
@@ -154,38 +159,53 @@ class Laptop:
             self._do("app", match, lambda: subprocess.Popen(["explorer.exe", target]))
         return f"Opening {match}."
 
-    def find_paths(self, query, want="any", limit=5):
+    def find_paths(self, query, want="any", limit=5, within=None, min_score=0.72):
         q = _norm(query)
         if not q:
             return []
-        scored = []
-        for root in SEARCH_ROOTS:
-            base = HOME / root
+        compact = q.replace(" ", "")
+        roots = [(within, 5)] if within else [(HOME / r, 4) for r in SEARCH_ROOTS] + [(HOME, 1)]
+        scored, seen = [], set()
+        for base, max_depth in roots:
             if not base.exists():
                 continue
             for dirpath, dirnames, filenames in os.walk(base):
                 depth = len(Path(dirpath).relative_to(base).parts)
                 dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
-                if depth >= 4:
-                    dirnames[:] = []
+                if base == HOME and depth == 0:
+                    dirnames[:] = [d for d in dirnames if d not in SEARCH_ROOTS]
                 names = ([(d, True) for d in dirnames] if want != "file" else []) + \
                         ([(f, False) for f in filenames] if want != "folder" else [])
+                if depth >= max_depth:
+                    dirnames[:] = []
                 for name, is_dir in names:
                     stem = _norm(name if is_dir else Path(name).stem)
                     if not stem:
                         continue
-                    score = 1.0 if stem == q else 0.9 if q in stem else difflib.SequenceMatcher(None, q, stem).ratio()
-                    if score >= 0.72:
-                        scored.append((score - 0.01 * depth, str(Path(dirpath) / name)))
+                    squeezed = stem.replace(" ", "")
+                    if stem == q or squeezed == compact:
+                        score = 1.0
+                    elif q in stem or compact in squeezed:
+                        score = 0.9
+                    else:
+                        score = max(difflib.SequenceMatcher(None, q, stem).ratio(),
+                                    difflib.SequenceMatcher(None, compact, squeezed).ratio())
+                    full = str(Path(dirpath) / name)
+                    if score >= min_score and full not in seen:
+                        seen.add(full)
+                        scored.append((score - 0.01 * depth + (0.02 if is_dir else 0), full))
         scored.sort(reverse=True)
         return [p for _, p in scored[:limit]]
 
-    def open_path(self, query, want="any"):
+    def open_path(self, query, want="any", within=None):
         key = _norm(query).removesuffix(" folder").strip()
-        if want != "file" and key in KNOWN_FOLDERS:
+        if want != "file" and within is None and key in KNOWN_FOLDERS:
             self._do("path", str(KNOWN_FOLDERS[key]), lambda: os.startfile(KNOWN_FOLDERS[key]))
             return f"Opening {key}."
-        found = self.find_paths(query, want)
+        base = KNOWN_FOLDERS.get(_norm(within)) if within else None
+        found = self.find_paths(query, want, within=base) if base else []
+        if not found:
+            found = self.find_paths(query, want)
         if not found:
             return None
         self._do("path", found[0], lambda: os.startfile(found[0]))

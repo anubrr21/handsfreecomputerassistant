@@ -3,7 +3,7 @@ import time
 
 from .skills import APP_ALIASES, KNOWN_FOLDERS, SHORTCUTS, SITES
 
-SAFE_UNADDRESSED = {"open", "youtube", "spotify", "web_search", "time", "battery", "volume", "media", "app",
+SAFE_UNADDRESSED = {"open", "open_in", "youtube", "spotify", "web_search", "time", "battery", "volume", "media", "app",
                     "brightness", "weather", "wiki", "calc", "timer", "focus", "scroll"}
 BRAIN_FIRST = {"wiki", "calc"}
 SYNONYMS = [
@@ -252,6 +252,13 @@ def _parse(text):
     if m:
         return "wiki", (m.group(1).strip(),)
 
+    m = re.fullmatch(r"(?:open|show(?: me)?|find|get) (?:the |my |a )?(.+?) (?:from|in|inside|under|of) (?:the |my )?"
+                     r"(downloads?|documents?|desktop|pictures?|photos|music|videos?)(?: folder| directory)?", t)
+    if m:
+        name = re.sub(r"\b(?:folder|directory|file)\b", "", m.group(1)).strip()
+        if name:
+            return "open_in", (name, m.group(2))
+
     m = re.fullmatch(r"(?:open|launch|start|run|go to|show(?: me)?|bring up|take me to) (?:up )?(.+)", t)
     if m:
         target = re.sub(r"^(?:the|my|a|an) ", "", m.group(1)).strip()
@@ -292,7 +299,14 @@ class Assistant:
             return self._known_name(parsed[1][0]) is not None
         if parsed[0] == "open":
             target, kind = parsed[1]
-            return kind == "any" and self._known_name(target) is not None
+            if kind == "any" and self._known_name(target) is not None:
+                return True
+            if kind != "file" and target in KNOWN_FOLDERS:
+                return True
+            return bool(self.laptop.find_paths(target, kind, limit=1, min_score=0.8))
+        if parsed[0] == "open_in":
+            return bool(self.laptop.find_paths(parsed[1][0], limit=1, within=KNOWN_FOLDERS.get(parsed[1][1]))
+                        or self.laptop.find_paths(parsed[1][0], limit=1))
         return True
 
     def _known_name(self, target):
@@ -348,6 +362,8 @@ class Assistant:
                     "help": "Here are the gestures."}[args[0]]
         if action == "open":
             return self._open(*args)
+        if action == "open_in":
+            return lap.open_path(args[0], "any", within=args[1]) or f"I couldn't find {args[0]} in {args[1]}."
         if action == "volume":
             return lap.volume(change=args[0], level=args[1])
         if action == "brightness":

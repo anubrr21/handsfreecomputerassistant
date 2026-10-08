@@ -169,6 +169,36 @@ class AssistantTests(unittest.TestCase):
         self.assistant.handle("pause hand control")
         self.assertEqual(self.controls, ["pause"])
 
+    def test_folders_are_found_by_spoken_name(self):
+        import tempfile
+        import hfc.skills as skills
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d)
+            (home / "iTantra").mkdir()
+            (home / "Downloads" / "iTantra-notes").mkdir(parents=True)
+            (home / "Downloads" / "budget report.pdf").write_text("x")
+            (home / "AppData" / "iTantra").mkdir(parents=True)
+            old_home, old_known = skills.HOME, dict(skills.KNOWN_FOLDERS)
+            skills.HOME = home
+            skills.KNOWN_FOLDERS.update(downloads=home / "Downloads", download=home / "Downloads")
+            try:
+                found = self.laptop.find_paths("i tantra", "folder")
+                self.assertEqual(Path(found[0]).name, "iTantra")
+                self.assertFalse(any("AppData" in Path(f).relative_to(home).parts for f in found))
+                self.assertEqual(self.assistant.handle("open I Tantra folder for me"), "Opening iTantra.")
+                self.assertTrue(self.assistant.is_clear_command("open I Tantra folder"))
+                self.assertFalse(self.assistant.is_clear_command("open the door"))
+                self.assertEqual(parse("open itra from download folder for me"), ("open_in", ("itra", "download")))
+                self.assertEqual(self.assistant.handle("open notes from download folder for me"), "Opening iTantra-notes.")
+                self.assertEqual(self.assistant.handle("open itra from download folder for me"), "Opening iTantra.")
+                (home / "Downloads" / "tr.pak").write_text("x")
+                self.assertEqual(self.assistant.handle("open itra from download folder"), "Opening iTantra.")
+                self.assertEqual(self.assistant.handle("open budget report from downloads"), "Opening budget report.pdf.")
+            finally:
+                skills.HOME = old_home
+                skills.KNOWN_FOLDERS.clear()
+                skills.KNOWN_FOLDERS.update(old_known)
+
     def test_arithmetic_is_computed_safely(self):
         lap = self.laptop
         self.assertEqual(lap.calculate("23 times 7"), "That is 161.")
