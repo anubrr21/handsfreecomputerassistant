@@ -21,7 +21,7 @@ TOKEN_URL = "https://accounts.spotify.com/api/token"
 API = "https://api.spotify.com/v1"
 
 
-GENERIC = re.compile(r"\b(?:songs?|music|tracks?|playlists?|hits|tunes|beats|vibes|mix)\b")
+GENERIC = re.compile(r"\b(?:songs?|music|tracks?|playlists?|hits|tunes|beats|vibes|mix|videos?)\b")
 VAGUE_START = re.compile(r"^(?:a|an|some|any|my|me|good|nice|the best|best|popular|latest|new|top|random)\b")
 
 

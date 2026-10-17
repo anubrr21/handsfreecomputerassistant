@@ -67,6 +67,7 @@ SHORTCUTS = {
     "maximize": "win+up", "minimize": "win+down", "snap left": "win+left", "snap right": "win+right",
     "zoom in": "ctrl+=", "zoom out": "ctrl+-", "full screen": "f11", "screenshot": "win+printscreen",
     "enter": "enter", "escape": "esc", "start menu": "win", "notifications": "win+n", "emoji": "win+.",
+    "send": "enter", "send it": "enter", "send this": "enter", "send the message": "enter", "submit": "enter",
 }
 
 
@@ -230,6 +231,12 @@ class Laptop:
         return f"Searching the web for {query}."
 
     def youtube(self, query, play=True):
+        from .spotify import describe
+        mood = describe(query)
+        if mood == "top hits":
+            return self.open_url("https://www.youtube.com") and "Opening YouTube."
+        if mood:
+            query = mood
         results = "https://www.youtube.com/results?search_query=" + urllib.parse.quote_plus(query)
         if play and not self.dry_run:
             try:

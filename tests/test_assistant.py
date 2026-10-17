@@ -215,6 +215,18 @@ class AssistantTests(unittest.TestCase):
         self.assertIsNone(join("open chrome", "what time is it"))
         self.assertIsNone(join("hello there", "shut down the computer"))
 
+    def test_fixes_from_live_use(self):
+        self.assertEqual(parse("stop the music on Spotify"), ("media", ("pause",)))
+        self.assertEqual(parse("resume the song on youtube"), ("media", ("play",)))
+        self.assertEqual(parse("open weather GPT folder in my computer"), ("open", ("weather gpt", "folder")))
+        self.assertEqual(parse("open iTantra folder on my laptop please"), ("open", ("itantra", "folder")))
+        self.assertEqual(parse("send"), ("shortcut", ("send",)))
+        self.assertEqual(self.assistant.handle("send it"), "Send it.")
+        self.assertEqual(self.laptop.log[-1], ("keys", "enter"))
+        self.laptop.log.clear()
+        self.assertEqual(self.assistant.handle("open YouTube and play a video"), "Opening YouTube.")
+        self.assertEqual(self.laptop.log, [("url", "https://www.youtube.com")])
+
     def test_closing_an_app_needs_the_wake_word(self):
         self.assertFalse(self.assistant.is_clear_command("close spotify"))
         self.assertEqual(self.assistant.handle("close spotify"), "Closed Spotify.")

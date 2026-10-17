@@ -78,10 +78,15 @@ PHRASES = {
 }
 
 
+PLACE = re.compile(r"(?: (?:in|on|from) (?:my|the|this) (?:computer|laptop|pc|system|machine|device))+$", re.I)
+
+
 def clean(text):
     original = text.strip().strip(".!?,").strip()
     original = POLITE.sub("", original)
     original = re.sub(r"[ ,]*(?:please|for me|right now|now)$", "", original, flags=re.I).strip()
+    original = PLACE.sub("", original).strip()
+    original = re.sub(r"[ ,]*(?:please|for me)$", "", original, flags=re.I).strip()
     return original.lower(), original
 
 
@@ -175,9 +180,11 @@ def _parse(text):
         return "calc", (m.group(1),)
     if re.fullmatch(r"(?:un)?mute(?: (?:the )?(?:sound|volume|audio|laptop|computer))?", t):
         return "media", ("mute",)
-    if re.fullmatch(r"(?:pause|stop)(?: (?:the |this )?(?:music|song|video|track|playback))?", t):
+    if re.fullmatch(r"(?:pause|stop)(?: (?:the |this |that )?(?:music|song|video|track|playback|player))?"
+                    r"(?: (?:on|in) (?:spotify|youtube|chrome))?", t):
         return "media", ("pause",)
-    if re.fullmatch(r"(?:play|resume)(?: (?:the |this )?(?:music|song|video|track|playback))?", t):
+    if re.fullmatch(r"(?:play|resume|continue|unpause)(?: (?:the |this |that )?(?:music|song|video|track|playback|player))?"
+                    r"(?: (?:on|in) (?:spotify|youtube))?", t):
         return "media", ("play",)
     if re.fullmatch(r"(?:play (?:the )?)?next(?: (?:song|track|video|one))?|skip(?: (?:this )?(?:song|track))?", t):
         return "media", ("next",)
