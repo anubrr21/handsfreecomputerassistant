@@ -10,6 +10,7 @@ SYNONYMS = [
     (r"^(?:fire up|pull up|boot up|start up|load up|get me|show me|launch|run) ", "open "),
     (r"^(?:quit|exit|kill|shut|terminate|end) (?!down)", "close "),
     (r"^(?:switch to|jump to|focus on|go back to) ", "switch to "),
+    (r"^player ", "play a "),
     (r"\b(?:google )?chrome browser\b", "chrome"),
     (r"\bmicrosoft edge browser\b|\bedge browser\b", "edge"),
     (r"\b(?:sound|audio)\b(?= (?:up|down|to|at|level|low|high|full|half))", "volume"),

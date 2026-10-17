@@ -1,4 +1,5 @@
 import base64
+import re
 import hashlib
 import json
 import os
@@ -18,6 +19,22 @@ SCOPES = "user-modify-playback-state user-read-playback-state"
 AUTH_URL = "https://accounts.spotify.com/authorize"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 API = "https://api.spotify.com/v1"
+
+
+GENERIC = re.compile(r"\b(?:songs?|music|tracks?|playlists?|hits|tunes|beats|vibes|mix)\b")
+VAGUE_START = re.compile(r"^(?:a|an|some|any|my|me|good|nice|the best|best|popular|latest|new|top|random)\b")
+
+
+def describe(query):
+    q = re.sub(r"\s+", " ", query.lower()).strip()
+    if not GENERIC.search(q):
+        return None
+    if not VAGUE_START.match(q) and len(q.split()) > 4:
+        return None
+    words = [w for w in re.sub(r"[^a-z0-9 ]", " ", q).split()
+             if w not in {"a", "an", "some", "any", "me", "the", "for", "please", "on", "of"}]
+    words = [w for w in words if not GENERIC.fullmatch(w)]
+    return " ".join(words) or "top hits"
 
 
 class SpotifyError(Exception):
@@ -162,3 +179,18 @@ class Spotify:
         self._api("PUT", "/me/player/play?device_id=" + device,
                   {"context_uri": track["album"]["uri"], "offset": {"uri": track["uri"]}, "position_ms": 0})
         return track["name"], ", ".join(a["name"] for a in track.get("artists", []))
+
+    def play_playlist(self, mood, wake=None):
+        found = self._api("GET", "/search?" + urllib.parse.urlencode({"q": f"{mood} songs", "type": "playlist", "limit": 10}))
+        items = [p for p in found.get("playlists", {}).get("items", []) if p and p.get("uri")]
+        if not items:
+            raise SpotifyError(f"no playlist found for {mood}")
+        words = set(mood.split())
+        best = max(enumerate(items), key=lambda pair: (len(words & set(re.sub(r"[^a-z0-9 ]", " ", pair[1]["name"].lower()).split())), -pair[0]))[1]
+        device = urllib.parse.quote(self._device(wake))
+        try:
+            self._api("PUT", "/me/player/shuffle?state=true&device_id=" + device)
+        except SpotifyError:
+            pass
+        self._api("PUT", "/me/player/play?device_id=" + device, {"context_uri": best["uri"]})
+        return best["name"]

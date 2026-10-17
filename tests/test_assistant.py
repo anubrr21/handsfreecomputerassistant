@@ -381,6 +381,30 @@ class SpotifyTests(unittest.TestCase):
             self.assertEqual(self.calls[2][2], {"context_uri": "spotify:album:1",
                                                 "offset": {"uri": "spotify:track:1"}, "position_ms": 0})
 
+    def test_vague_requests_become_playlists_and_titles_stay_titles(self):
+        from hfc.spotify import describe
+        self.assertEqual(describe("a hindi song"), "hindi")
+        self.assertEqual(describe("an English song"), "english")
+        self.assertEqual(describe("a Bengali Durga Puja song"), "bengali durga puja")
+        self.assertEqual(describe("a song"), "top hits")
+        self.assertEqual(describe("some romantic music"), "romantic")
+        self.assertIsNone(describe("shape of you"))
+        self.assertIsNone(describe("believer imagine dragons"))
+        self.assertIsNone(describe("a sky full of stars"))
+
+    def test_playlist_is_chosen_by_matching_words_and_played_shuffled(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            sp = self.client([
+                {"playlists": {"items": [None, {"name": "Party Mix", "uri": "spotify:playlist:p"},
+                                         {"name": "Hindi Hits 2026", "uri": "spotify:playlist:h"}]}},
+                {"devices": [{"id": "laptop", "is_active": True}]},
+                {}, {},
+            ], Path(d))
+            self.assertEqual(sp.play_playlist("hindi"), "Hindi Hits 2026")
+            self.assertIn("shuffle", self.calls[2][1])
+            self.assertEqual(self.calls[3][2], {"context_uri": "spotify:playlist:h"})
+
     def test_no_open_device_starts_the_app_and_tries_again(self):
         import tempfile
         import hfc.spotify as module

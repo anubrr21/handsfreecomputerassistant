@@ -248,6 +248,12 @@ class Laptop:
         failed = ""
         if self.spotify_api is not None and self.spotify_api.ready and not self.dry_run:
             try:
+                from .spotify import describe
+                mood = describe(query)
+                if mood:
+                    name = self.spotify_api.play_playlist(mood, wake=lambda: os.startfile("spotify:"))
+                    self.log.append(("spotify-playlist", mood))
+                    return f"Playing the playlist {name} on Spotify, shuffled."
                 name, artist = self.spotify_api.play(query, wake=lambda: os.startfile("spotify:"))
                 self.log.append(("spotify-play", query))
                 return f"Playing {name} by {artist} on Spotify."
